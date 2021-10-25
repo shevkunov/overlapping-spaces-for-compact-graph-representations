@@ -52,6 +52,14 @@ different conversion from distance to probability
 - /hdssm_story/offline_ranking_1_div_(no_exp)_dist_exp.ipynb
 - /hdssm_story/offline_ranking_1_div_dist_exp.ipynb
 
+weights analysis
+- /hdssm_story/reviews_osweights_distortion.ipynb
+
+overlapping spaces' depth analyis
+- /hdssm_story/reviews_ttl_distortion.ipynb  (t = 2)
+- /hdssm_story/reviews_ttl_distortion-ttl3.ipynb (t = 3)
+- /hdssm_story/reviews_ttl_distortion-ttl3_sq.ipynb (t = 3)
+
 ### Some hints:
 - S10 = spherical space with simple parametrization
 - hS10 = spherical space with hyperspherical parametrization
