@@ -64,6 +64,21 @@ def expand_to_hyperboloid(x):
     #add = tf.cast(add, dtype=tf.float32)
     return tf.concat([add, x], axis=1)
 
+def expand_to_hypersphere(v):
+    cv = tf.math.cos(v)
+    sv = tf.math.sin(v)
+
+    m = 1.
+    l = list()
+    for i in range(v.shape[1]):
+        l.append(sv[:, i] * m)  # sin_i * cos_(i-1) * ... * cos_0
+        m = m * cv[:, i]
+    l.append(m)  # cos_i * ... * cos_0
+    ev = tf.transpose(tf.stack(l))
+    if not (tf.abs(tf.norm(ev, axis=1) - 1.) < 1e-5).numpy().all():
+        print("WARN: expand_to_hypersphere assert failed at e-5 prec.")
+    return ev
+
 def load_usca312(path):
     usca312 = np.eye(312) - np.ones((312, 312))
     

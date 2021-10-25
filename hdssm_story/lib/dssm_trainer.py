@@ -36,6 +36,10 @@ class StringPretokenizer:
             assert False, f"Unknown hash {self.cfg['hash_type']}"        
         
     def fit(self, rows):
+        if self.fitted:
+            print("WARN:String pretokenizer already fitted, ignoring...")
+            return
+
         tokens = collections.Counter()
         for name in tqdm.tqdm(rows):
             if isinstance(name, str):
@@ -122,6 +126,7 @@ class StringPretokenizer:
 
 class DssmTrainerWithCustomTokenizer:
     def __init__(self, model, qs, train_size=0.9, val_offset=1000, batch_size=4096,
+                 doc_tokenizer=None, query_tokenizer=None,
                  tokenizer_cfg={"total_tokens":30000}):
         self.train_data = qs
         self.batch_size = batch_size
@@ -130,8 +135,8 @@ class DssmTrainerWithCustomTokenizer:
         self.X_test = self.train_data.values[int(self.train_data.shape[0] * train_size):]
         self.X_train = self.train_data.values[:int(self.train_data.shape[0] * train_size)]
         
-        self.doc_tokenizer = StringPretokenizer(**tokenizer_cfg)
-        self.query_tokenizer = StringPretokenizer(**tokenizer_cfg)
+        self.doc_tokenizer = StringPretokenizer(**tokenizer_cfg) if doc_tokenizer is None else doc_tokenizer
+        self.query_tokenizer = StringPretokenizer(**tokenizer_cfg) if query_tokenizer is None else query_tokenizer
         
         self.train_query_tokens = self.query_tokenizer.fit_pretokenize(self.X_train[:, 0], raw=True)
         self.train_doc_tokens = self.doc_tokenizer.fit_pretokenize(self.X_train[:, 1], raw=True)

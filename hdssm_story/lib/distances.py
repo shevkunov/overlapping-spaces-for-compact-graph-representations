@@ -4,7 +4,7 @@ import copy
 
 assert int(tf.__version__.split(".")[0]) >= 2
 
-from utils import expand_to_hyperboloid
+from utils import expand_to_hyperboloid, expand_to_hypersphere
 from layers import *
 
 
@@ -57,8 +57,32 @@ class Distances:
     def dot(self, l, r):
         return l @ tf.transpose(r)
     
+    def wips(self, l, r):
+        if not self.custom_weights_initialized:
+            self.weights.append(
+                tf.Variable(np.zeros(l.shape[1])-1e-9,
+                            dtype=self.dtype, trainable=True,
+                            name="wips_weights")
+            )
+            self.custom_weights_initialized = True
+
+        return (l * self.weights[-1]) @ tf.transpose(r)
+    
     def inverted_dot(self, l, r):
         return 1. - self.dot(l, r)
+    
+    def wips(self, l, r):
+        if not self.custom_weights_initialized:
+            print("XDOTINIT")
+            self.weights.append(
+                tf.Variable(np.zeros(l.shape[1]), dtype=self.dtype, trainable=True,
+                            name="triple_trainable_exdot_weights")
+            )
+            self.custom_weights_initialized = True
+        return 1. - self.dot(l * self.weights[-1], r)
+
+    def shifted_wips(self, l, r):
+        return 1. - self.wips(l, r)
 
     def exp_minus_dot(self, l, r):
         return tf.exp(-self.dot(l, r))
@@ -135,11 +159,17 @@ class Distances:
         cos = tf.math.minimum(cos, 1. - 1e-4)
 
         return tf.math.acos(cos)
+    
+    def hyperspherical(self, l, r):
+        return self.spherical(
+            expand_to_hypersphere(l),
+            expand_to_hypersphere(r)
+        )
   
     def triple_trainable(self, l, r): 
         return self.tripletriple_trainable_l0(l, r)
 
-    def triple_trainable_l0(self, l, r, corrected=False):
+    def triple_trainable_l0(self, l, r, corrected=False, hyperspherical=False):
         if not self.custom_weights_initialized:
             self.weights.append(
                 tf.Variable([0, 0, 0], dtype=self.dtype, trainable=True,
@@ -151,18 +181,49 @@ class Distances:
         return (
             normed[0] * (self.euclidian if not corrected else self.euclidian_corrected)(l, r)
             + normed[1] * self.expanded_hyp(l, r)
-            + normed[2] * self.spherical(l, r)
+            + normed[2] * (self.spherical if not hyperspherical else self.hyperspherical)(l, r)
         )
     
     def triple_trainable_l0_corrected(self, l, r):
         return self.triple_trainable_l0(l, r, corrected=True)
     
-    def triple_trainable_l1(self, l, r, corrected=False, normed=True):
+    def triple_trainable_l0_hs(self, l, r):
+        return self.triple_trainable_l0(l, r, hyperspherical=True)
+    
+    def triple_trainable_l0_hs_corrected(self, l, r):
+        return self.triple_trainable_l0(l, r, hyperspherical=True, corrected=True)
+    
+    def triple_trainable_l1_hs(self, l, r):
+        return self.triple_trainable_l1(l, r, hyperspherical=True)
+
+    def triple_trainable_l1_hs_corrected(self, l, r):
+        return self.triple_trainable_l1(l, r, hyperspherical=True, corrected=True)
+
+    def triple_trainable_l1_ex(self, l, r):
+        return self.triple_trainable_l1(l, r, exdot=True)
+    
+    def triple_trainable_l1_ex_corrected(self, l, r):
+        return self.triple_trainable_l1(l, r, exdot=True, corrected=True)
+    
+    def triple_trainable_l1_hs_ex(self, l, r):
+        return self.triple_trainable_l1(l, r, hyperspherical=True, exdot=True, corrected=True)
+    
+    def triple_trainable_l1(self, l, r, corrected=False, normed=True, hyperspherical=False, exdot=False):
         assert l.shape[1] % 2 == 0
         
         if not self.custom_weights_initialized:
+            if exdot:
+                print("XDOTINIT")
+                self.weights.append(
+                    tf.Variable(1., dtype=self.dtype, trainable=True,
+                                name="triple_trainable_exdot_shift")
+                )
+                self.weights.append(
+                    tf.Variable(np.zeros(l.shape[1]), dtype=self.dtype, trainable=True,
+                                name="triple_trainable_exdot_weights")
+                )
             self.weights.append(
-                tf.Variable(np.zeros(9), dtype=self.dtype, trainable=True,
+                tf.Variable(np.zeros(9 if not exdot else 10), dtype=self.dtype, trainable=True,
                             name="triple_trainable_distance_weights")
             )
             self.custom_weights_initialized = True
@@ -173,23 +234,50 @@ class Distances:
             return (
                 weights[0] * (self.euclidian if not corrected else self.euclidian_corrected)(l_slice, r_slice)
                 + weights[1] * self.expanded_hyp(l_slice, r_slice)
-                + weights[2] * self.spherical(l_slice, r_slice)
+                + weights[2] * (self.spherical if not hyperspherical else self.hyperspherical)(l_slice, r_slice)
             )    
             
         normed = tf.nn.softmax(self.weights[-1]) if normed else tf.math.abs(self.weights[-1])
         fr, ce, to = 0, int(l.shape[1] / 2), l.shape[1]
-        return (
+        res = (
             call(l, r, fr, to, normed[0:3])
             + call(l, r, fr, ce, normed[3:6])
             + call(l, r, ce, to, normed[6:9])
         )
+
+        if exdot:
+            res = res + normed[9] * (self.weights[-3] - self.dot(l * self.weights[-2], r))
+
+        return res
     
-    def triple_trainable_l1_sq(self, l, r, corrected=False):
+    def triple_trainable_l1_sq_hs(self, l, r):
+        return self.triple_trainable_l1_sq(l, r, hyperspherical=True)
+
+    def triple_trainable_l1_sq_hs_corrected(self, l, r):
+        return self.triple_trainable_l1_sq(l, r, corrected=True, hyperspherical=True)
+
+    def triple_trainable_l1_sq_ex(self, l, r):
+        return self.triple_trainable_l1_sq(l, r, exdot=True)
+    
+    def triple_trainable_l1_sq_ex_corrected(self, l, r):
+        return self.triple_trainable_l1_sq(l, r, exdot=True, corrected=True)
+
+    def triple_trainable_l1_sq(self, l, r, corrected=False, hyperspherical=False, exdot=False):
         assert l.shape[1] % 2 == 0
         
         if not self.custom_weights_initialized:
+            if exdot:
+                print("XDOTINIT")
+                self.weights.append(
+                    tf.Variable(1., dtype=self.dtype, trainable=True,
+                                name="triple_trainable_exdot_shift")
+                )
+                self.weights.append(
+                    tf.Variable(np.zeros(l.shape[1]), dtype=self.dtype, trainable=True,
+                                name="triple_trainable_exdot_weights")
+                )
             self.weights.append(
-                tf.Variable(np.zeros(8), dtype=self.dtype, trainable=True,
+                tf.Variable(np.zeros(8 if not exdot else 9), dtype=self.dtype, trainable=True,
                             name="triple_trainable_l1_sq_distance_weights")
             )
             self.custom_weights_initialized = True
@@ -197,19 +285,22 @@ class Distances:
         normed = tf.nn.softmax(self.weights[-1])
         fr, ce, to = 0, int(l.shape[1] / 2), l.shape[1]
         euclidian = self.euclidian if not corrected else self.euclidian_corrected
+        spherical = self.spherical if not hyperspherical else self.hyperspherical
+ 
         return tf.math.sqrt(
             normed[0] * self.expanded_hyp(l, r) ** 2
-            + normed[1] * self.spherical(l, r) ** 2
+            + normed[1] * spherical(l, r) ** 2
             
             + normed[2] * self.expanded_hyp(l[:, fr:ce], r[:, fr:ce]) ** 2
-            + normed[3] * self.spherical(l[:, fr:ce], r[:, fr:ce]) ** 2
+            + normed[3] * spherical(l[:, fr:ce], r[:, fr:ce]) ** 2
             + normed[4] * euclidian(l[:, fr:ce], r[:, fr:ce]) ** 2
             
             + normed[5] * self.expanded_hyp(l[:, ce:to], r[:, ce:to]) ** 2
-            + normed[6] * self.spherical(l[:, ce:to], r[:, ce:to]) ** 2
+            + normed[6] * spherical(l[:, ce:to], r[:, ce:to]) ** 2
             + normed[7] * euclidian(l[:, ce:to], r[:, ce:to]) ** 2
+            + ((normed[8] * (self.weights[-3] - self.dot(l * self.weights[-2], r)) ** 2) if exdot else 0.)
         )
-    
+  
     def triple_trainable_l1_corrected(self, l, r):
         return self.triple_trainable_l1(l, r, corrected=True)
     
@@ -388,7 +479,9 @@ class ProductDistances:
     def __str__(self):
         stringify_map = {
             "euclidian": "E",
+            "euclidian_corrected": "Ec",
             "spherical": "S",
+            "hyperspherical": "hS",
             "expanded_hyp": "H",
             "symmetric_riemann_spherical": "Sr",
             "symmetric_riemann_hyperbolical_expanded": "Hr",
